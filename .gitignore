@@ -1,0 +1,12 @@
+# compiled files
+__pycache__/
+*.pyc
+
+# ide files
+.idea/
+
+# virtualenv
+venv/
+
+# project files
+bitmex_orders/.env
