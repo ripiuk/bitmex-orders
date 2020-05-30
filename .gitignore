@@ -10,3 +10,5 @@ venv/
 
 # project files
 bitmex_orders/.env
+.coverage
+htmlcov

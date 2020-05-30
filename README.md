@@ -1,13 +1,13 @@
 # Bitmex orders
 
 
-#### Description
+### Description
 
 This project provides its own API interface (REST + Websocket) for 
 [Bitmex](https://www.bitmex.com/) account order management.
 
 
-#### How to run locally
+### How to run locally
 
 Install python, create virtual environment and install all the requirements:
 
@@ -29,4 +29,19 @@ Run the project:
 
     make run
 
-It will open your browser on http://127.0.0.1:8000/
+It will open your browser on http://127.0.0.1:8000/orders
+
+
+### How to run tests
+
+Run the tests:
+
+    make test
+
+Check coverage:
+
+    make test-cov
+
+
+### Usage Examples
+...

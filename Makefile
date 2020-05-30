@@ -28,27 +28,45 @@ install-psql:
 
 # ----- Virtualenv -----
 
-venv:
-	@if [ ! -d "venv" ]; then $(PYTHON) -m venv venv ; fi;
+venv-init:
+	if [ ! -e "venv/bin/activate" ]; then $(PYTHON) -m venv venv ; fi;
+	bash -c "source venv/bin/activate && \
+		pip install --upgrade wheel pip setuptools && \
+		pip install --upgrade --requirement requirements.txt"
 
 
 # ----- Update -----
 
-update:
-	@echo "----- Updating requirements -----"
-	@export XXHASH_FORCE_CFFI=1
-	@pip install --upgrade wheel pip
-	@pip install --upgrade --requirement requirements.txt
+update: venv-init
+
+update-dev: venv-init
+	bash -c "source venv/bin/activate && \
+		pip install --upgrade --requirement requirements-dev.txt"
 
 
 # ----- Setup -----
 
-setup: install venv
-	@bash -c "source venv/bin/activate && $(MAKE) update"
+setup: install venv-init
+
+setup-test: install update-dev
 
 
 # ----- Run -----
 
 run:
-	xdg-open "http://127.0.0.1:8000/"
-	python manage.py runserver
+	bash -c "source venv/bin/activate && \
+		python -m webbrowser -t 'http://127.0.0.1:8000/orders' && \
+		python manage.py runserver"
+
+
+# ----- Tests -----
+
+test: update-dev
+	bash -c "source venv/bin/activate && \
+		python manage.py test && flake8"
+
+test-cov: update-dev
+	bash -c "source venv/bin/activate && \
+		coverage run --source='.' manage.py test && \
+		coverage report && coverage html && \
+		python -m webbrowser -t 'htmlcov/index.html'"
