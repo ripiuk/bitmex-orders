@@ -3,7 +3,7 @@ from rest_framework import serializers
 from orders.models import Account, Order
 
 
-class AccountSerializer(serializers.ModelSerializer):
+class _AccountSerializer(serializers.ModelSerializer):
     account = serializers.CharField(read_only=True)
 
     class Meta:
