@@ -25,7 +25,7 @@ class Order(models.Model):
     volume = models.PositiveIntegerField(null=False, blank=False)
     timestamp = models.DateTimeField(auto_now_add=False, auto_now=True)
     side = models.CharField(max_length=9, blank=False, choices=Side.choices)
-    price = models.FloatField(blank=False)
+    price = models.FloatField(null=True, blank=False)
     account = models.ForeignKey(Account, on_delete=models.CASCADE, null=False)
 
     def __str__(self):

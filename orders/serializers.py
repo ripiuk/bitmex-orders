@@ -1,26 +1,15 @@
 from rest_framework import serializers
 
-from orders.models import Account, Order
-
-
-class _AccountSerializer(serializers.ModelSerializer):
-    account = serializers.CharField(read_only=True)
-
-    class Meta:
-        model = Account
+from orders.models import Order
 
 
 class OrderSerializer(serializers.ModelSerializer):
-    account = serializers.CharField(source='account.name', read_only=True)
 
     class Meta:
         model = Order
-        fields = (
-            'order_id',
-            'symbol',
-            'volume',
-            'timestamp',
-            'side',
-            'price',
-            'account',
-        )
+        fields = '__all__'
+
+    def to_representation(self, instance):
+        rep = super(OrderSerializer, self).to_representation(instance)
+        rep['account'] = instance.account.name
+        return rep

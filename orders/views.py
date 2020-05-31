@@ -1,16 +1,20 @@
 import json
 
 from bitmex import bitmex
+from django.conf import settings
 from rest_framework import status
 from django.http import HttpResponse
 from rest_framework.views import APIView
 from django.http.request import QueryDict
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
-from bravado.exception import HTTPNotFound, HTTPUnauthorized
+from bravado.exception import HTTPNotFound, HTTPUnauthorized, HTTPBadRequest
 
 from orders.serializers import OrderSerializer
 from orders.models import Account, Order
+
+
+BITMEX_TEST_MODE = settings.DEBUG
 
 
 class Orders(APIView):
@@ -33,6 +37,66 @@ class Orders(APIView):
         self.check_object_permissions(request, orders)
         return Response(serializer.data)
 
+    @staticmethod
+    def post(request):
+        """Create new order for an account"""
+        try:
+            account_name = request.query_params.get('account')
+            account = _get_account_(account_name)
+        except AccountNotFound as err:
+            return Response(
+                data={'error': str(err)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        client = bitmex(
+            test=BITMEX_TEST_MODE,
+            api_key=account.api_key,
+            api_secret=account.api_secret,
+        )
+        try:
+            # FIXME: it always raises error:
+            #  "Account has insufficient Available Balance"
+            result, _ = client.Order.Order_new(
+                symbol=request.data['symbol'],
+                orderQty=request.data['volume'],
+                side=request.data['side'],
+                ordType='Market',
+            ).result()
+        except HTTPUnauthorized as err:
+            return Response(
+                data={'error': str(err)},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except HTTPNotFound as err:
+            return Response(
+                data={'error': str(err)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except HTTPBadRequest as err:
+            return Response(
+                data={'error': str(err)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except KeyError as err:
+            return Response(
+                data={'error': f'Missed mandatory field {err}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = OrderSerializer(
+            data={
+                **request.data,
+                'order_id': result.get('orderID'),
+                'price': result.get('price'),
+                'account': account.id,
+            }
+        )
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class OrderDetail(APIView):
     """View/delete order for an account"""
@@ -50,7 +114,7 @@ class OrderDetail(APIView):
             )
 
         client = bitmex(
-            test=True,
+            test=BITMEX_TEST_MODE,
             api_key=account.api_key,
             api_secret=account.api_secret,
         )
@@ -86,12 +150,12 @@ class OrderDetail(APIView):
             )
 
         client = bitmex(
-            test=True,
+            test=BITMEX_TEST_MODE,
             api_key=account.api_key,
             api_secret=account.api_secret,
         )
         try:
-            result, _ = client.Order.Order_cancel(orderID=order_id).result()
+            client.Order.Order_cancel(orderID=order_id).result()
         except HTTPNotFound as err:
             return Response(
                 data={'error': str(err)},
