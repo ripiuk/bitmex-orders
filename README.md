@@ -7,7 +7,7 @@ This project provides its own API interface (REST + Websocket) for
 [Bitmex](https://www.bitmex.com/) account orders management.
 
 
-### How to run locally
+### How to run it locally
 
 1. Install python, create virtual environment and install all the requirements:
 
@@ -25,7 +25,7 @@ This project provides its own API interface (REST + Websocket) for
         SECRET_KEY=Some secret key here
         DATABASE_URL=pgsql://user_name:user_password@localhost:5432/bitmex_orders
 
-1. Create new account in the DB.
+1. Create a new account in the DB.
 
 2. Run the project:
 
@@ -103,7 +103,7 @@ Check the coverage:
 
 * Websocket usage
 
-    Open websocket client
+    Open a websocket client:
 
         $ make run-ws-client
 

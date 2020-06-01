@@ -1,7 +1,11 @@
 import json
+import hmac
+import time
+import hashlib
 import asyncio
 import typing as typ
-from collections import namedtuple
+from urllib.parse import urlparse
+from collections import namedtuple, defaultdict
 
 import websockets
 from channels.db import database_sync_to_async
@@ -16,18 +20,22 @@ class ReceivedDataValidationError(Exception):
 
 
 class BitmexInstrumentConsumer(AsyncWebsocketConsumer):
+    # TODO: find another way to check if there are
+    #  no subscriptions left for a group (counter - is a bad way)
+    subs_per_group = defaultdict(int)
+    group_bitmex_ws: typ.Dict[str, WebSocketClientProtocol] = {}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         Actions = namedtuple('Actions', ('subscribe', 'unsubscribe'))
         self.actions = Actions(subscribe='subscribe', unsubscribe='unsubscribe')
-        self.group_bitmex_ws: typ.Dict[str, WebSocketClientProtocol] = {}
+        self.curr_subs = set()
 
     async def connect(self):
         await self.accept()
 
     async def disconnect(self, code):
-        for group_name in self.group_bitmex_ws.keys():
+        for group_name in self.curr_subs:
             await self.channel_layer.group_discard(
                 group_name,
                 self.channel_name,
@@ -109,10 +117,8 @@ class BitmexInstrumentConsumer(AsyncWebsocketConsumer):
 
         :param account: needed account name from DB
         """
-        await self.channel_layer.group_add(account, self.channel_name)
-
         if not (
-                group_ws := self.group_bitmex_ws.get(account)
+                group_ws := BitmexInstrumentConsumer.group_bitmex_ws.get(account)
         ) or (
                 group_ws
                 and isinstance(group_ws, WebSocketClientProtocol)
@@ -124,12 +130,18 @@ class BitmexInstrumentConsumer(AsyncWebsocketConsumer):
                     'success': True, 'subscribe': 'instrument', 'account': account,
                 })
             )
-        else:
+        elif account in self.curr_subs:
+            # already subscribed
             await self.send(
                 text_data=json.dumps({
                     'success': False, 'subscribe': 'instrument', 'account': account,
                 })
             )
+            return
+
+        await self.channel_layer.group_add(account, self.channel_name)
+        BitmexInstrumentConsumer.subs_per_group[account] += 1
+        self.curr_subs.add(account)
 
     async def _unsubscribe_user(self, account: str) -> None:
         """Subscribe current user from bitmex instrument WS
@@ -137,7 +149,8 @@ class BitmexInstrumentConsumer(AsyncWebsocketConsumer):
         :param account: account name
         :return:
         """
-        if account not in self.group_bitmex_ws:
+        if account not in self.curr_subs:
+            # user is not subscribed to this group
             await self.send(
                 text_data=json.dumps({
                     'success': False, 'unsubscribe': 'instrument', 'account': account,
@@ -150,32 +163,53 @@ class BitmexInstrumentConsumer(AsyncWebsocketConsumer):
                 'success': True, 'unsubscribe': 'instrument', 'account': account,
             })
         )
-        self.group_bitmex_ws.pop(account, None)
+        # one more check to be sure and not raise a KeyError
+        self.curr_subs.remove(account) \
+            if account in self.curr_subs else None
+        BitmexInstrumentConsumer.subs_per_group[account] -= 1
 
     async def send_message(self, event):
         message = event['message']
         message = json.dumps(message) if not isinstance(message, str) else message
         await self.send(text_data=message)
 
+    @staticmethod
     @database_sync_to_async
-    def _is_account_exists(self, account_name: str) -> bool:
+    def _is_account_exists(account_name: str) -> bool:
         return Account.objects.filter(name=account_name).exists()
+
+    @staticmethod
+    @database_sync_to_async
+    def _get_account_by_name(account_name: str) -> Account:
+        return Account.objects.get(name=account_name)
 
     async def bitmex_connect(self, account_name: str) -> None:
         """Connect to Bitmex instrument WS
 
         :param account_name: account name from DB
         """
-        # TODO: Add API credentials here
         ws_url = "wss://testnet.bitmex.com/realtime?subscribe=instrument"
 
         async def monitor_data():
-            async with websockets.connect(ws_url) as ws:
-                self.group_bitmex_ws[account_name] = ws
+            async with websockets.connect(
+                    uri=ws_url,
+                    extra_headers=await self._generate_auth_headers(
+                        account_name=account_name,
+                        url=ws_url)
+            ) as ws:
+                BitmexInstrumentConsumer.group_bitmex_ws[account_name] = ws
                 while True:
                     if not ws.open:
+                        if BitmexInstrumentConsumer.subs_per_group[account_name] <= 0:
+                            # Stop the loop if there is no subscribers
+                            break
                         # Websocket is not connected. Trying to reconnect.
-                        ws = await websockets.connect(ws_url)
+                        ws = await websockets.connect(
+                            uri=ws_url,
+                            extra_headers=await self._generate_auth_headers(
+                                account_name=account_name,
+                                url=ws_url
+                            ))
 
                     message = await ws.recv()
 
@@ -200,13 +234,13 @@ class BitmexInstrumentConsumer(AsyncWebsocketConsumer):
                                 'message': instrument_info,
                             }
                         )
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(2)
 
         asyncio.create_task(monitor_data())
 
     @staticmethod
-    def _transform_bitmex_msg(message: dict, account: str) -> \
-            typ.List[typ.Optional[dict]]:
+    def _transform_bitmex_msg(message: dict, account: str) \
+            -> typ.List[typ.Optional[dict]]:
         """Transform bitmex message with instrument info
 
         :param message: bitmex instrument message
@@ -226,3 +260,53 @@ class BitmexInstrumentConsumer(AsyncWebsocketConsumer):
             for instrument_info in message['data']
             if (price := instrument_info.get('lastPrice'))
         ]
+
+    @staticmethod
+    async def _generate_auth_headers(account_name: str, url: str) \
+            -> typ.List[typ.Tuple[str, str]]:
+        """Generate WS extra headers from account credentials
+
+        :param account_name: account name from DB
+        :param url: WS uri path
+        :return: an iterable of (name, value) pairs
+        """
+        account = await BitmexInstrumentConsumer._get_account_by_name(
+            account_name=account_name,
+        )
+
+        api_key = account.api_key
+        expires = int(time.time()) + 5 * 60  # 5 minutes
+        signature = BitmexInstrumentConsumer._create_bitmex_signature(
+            api_secret=account.api_secret,
+            verb='GET',
+            endpoint=url,
+            expires=expires,
+        )
+
+        return [
+            ("api-expires", str(expires)),
+            ("api-signature", signature),
+            ("api-key", api_key),
+        ]
+
+    @staticmethod
+    def _create_bitmex_signature(
+            api_secret: str, verb: str, endpoint: str, expires: int) -> str:
+        """Generates an API signature.
+        A signature is HMAC_SHA256(secret, verb + path + nonce + data), hex encoded.
+
+        :param api_secret: secret api key
+        :param verb: method e.g. 'GET'
+        :param endpoint: WS uri path
+        :param expires: unix timestamp (in seconds)
+        :return: hex encoded signature
+        """
+        verb = verb.upper()
+        path = urlparse(endpoint).path
+        message = f'{verb}{path}{expires}'.encode('utf-8')
+
+        return hmac.new(
+            key=api_secret.encode('utf-8'),
+            msg=message,
+            digestmod=hashlib.sha256
+        ).hexdigest()
