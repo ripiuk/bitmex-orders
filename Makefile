@@ -58,6 +58,10 @@ run:
 		python -m webbrowser -t 'http://127.0.0.1:8000/orders' && \
 		python manage.py runserver"
 
+run-ws-client:
+	bash -c "source venv/bin/activate && \
+		python -m websockets 'ws://localhost:8000/instrument/'"
+
 
 # ----- Tests -----
 

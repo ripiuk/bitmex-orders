@@ -4,3 +4,5 @@ djangorestframework==3.11.0
 psycopg2==2.8.5
 bitmex==0.2.2
 bravado==10.6.2
+channels==2.4.0
+websockets==8.1
