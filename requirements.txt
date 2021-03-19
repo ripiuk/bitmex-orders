@@ -1,6 +1,6 @@
 Django==3.0.6
 django-environ==0.4.5
-djangorestframework==3.11.0
+djangorestframework==3.11.2
 psycopg2==2.8.5
 bitmex==0.2.2
 bravado==10.6.2
